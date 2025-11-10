@@ -1,0 +1,135 @@
+---
+trigger: always_on
+alwaysApply: true
+---
+
+# 🎨 FRONTEND PROMPT WORKFLOW  
+### *Design systems that feel, flow, and function beautifully.*
+
+A companion to your **Vibe Code Workflow**, this guide helps you build **frontend experiences that are artistic, cohesive, and technically flawless** —  
+merging creativity with engineering discipline.
+
+---
+
+## 🧩 1. Design System Ideation Prompt (Creative Direction)
+
+Use this prompt when starting a new **website or app** project.  
+It helps you create a design concept that is *memorable, emotionally resonant,* and *aesthetically unique* — not just another template look.
+
+---
+
+### 🪄 **Prompt:**
+
+> I'm creating a **[website/app]** for **[purpose/target audience]** and need you to brainstorm a **comprehensive design system** that feels **unique and memorable**.  
+>  
+> The project should convey **[primary emotion/feeling you want users to experience]** and appeal to **[specific target demographic]**,  
+> with a visual style that's **[desired aesthetic — modern / vintage / playful / professional / dark / minimalist / artistic / techy / luxury / futuristic]**.  
+>  
+> Please suggest:
+> - 🎨 A **cohesive color palette** (primary, secondary, accent, background, and neutral tones).  
+> - ✍️ **Typography choices** (font families, font weights, and personality match).  
+> - 🧱 **UI component styles** — buttons, cards, modals, navbars, forms, etc.  
+> - ✨ **Unique visual/interactive elements** (patterns, icons, animations, transitions).  
+> - 🧭 **Visual hierarchy strategy** — how users’ attention should flow toward the **[primary user action/goal]**.  
+> - 💡 **2–3 creative interaction patterns** that *surprise and delight* users, while staying consistent with the brand personality.  
+>  
+> The system should feel **cohesive**, **distinctive**, and **non-generic** — something that stands out from typical template designs.  
+> Please explain *why* each choice supports the project’s purpose, emotion, and audience.
+
+---
+
+### 🧠 *Usage Tip:*
+Run this prompt multiple times with different moods or aesthetics — for example:
+- “Futuristic minimal tech startup”  
+- “Playful eco-friendly brand”  
+- “Dark luxury lifestyle app”  
+
+Compare the outcomes, then select the design system that most aligns with your project’s emotion and purpose.
+
+---
+
+## 📘 2. Design System Documentation Prompt (Implementation Blueprint)
+
+Use this after you’ve chosen your design system concept.  
+This creates a **developer-ready documentation file** that defines every rule and ensures **consistent implementation** across all devices and components.
+
+---
+
+### ⚙️ **Prompt:**
+
+> Based on the design system concept **"[paste the chosen design system name or concept here]"**,  
+> please create **comprehensive design system documentation** that includes:
+>
+> ### 🎨 **Color System**
+> - Exact color codes in **HEX**, **RGB**, and **HSL**.  
+> - Usage rules for each (e.g. “Primary for CTAs”, “Accent for hover states”).  
+>
+> ### ✍️ **Typography**
+> - Font families (primary + secondary).  
+> - Font weights and their roles (e.g. headings, paragraphs, labels).  
+> - Recommended font sizes, line heights, and letter spacing for **mobile**, **tablet**, and **desktop**.  
+>
+> ### 📏 **Spacing & Layout**
+> - Grid system details (columns, gutters, and breakpoints).  
+> - Standard spacing units (e.g. 4px or 8px scale).  
+> - Container widths and alignment recommendations.  
+>
+> ### 🧱 **Component Guidelines**
+> - Buttons, inputs, modals, cards, alerts, navigation, and tooltips.  
+> - State behavior (hover, active, disabled, success, error).  
+> - Component-specific best practices (padding, radius, shadow, motion).  
+>
+> ### ✨ **Animations & Visuals**
+> - Motion rules (timing, easing, delay).  
+> - Microinteractions and transitions that enhance usability.  
+>
+> ### 🚫 **Do’s and Don’ts**
+> - Avoid overuse of shadows, inconsistent radii, or excessive animation.  
+> - Accessibility standards: color contrast, focus visibility, keyboard navigation.  
+>
+> Format as **structured Markdown documentation** so it can be handed directly to a **developer AI** or **frontend engineer**.  
+> Ensure it’s *precise enough to reproduce 1:1* in any frontend framework (React, Next.js, Vue, etc.).
+
+---
+
+## 🧰 3. Workflow Integration (How to Use in Projects)
+
+- [ ] Run **Prompt 1** during ideation → Generate multiple design directions.  
+- [ ] Choose the final concept and name it (e.g., *“Nebula Minimal”*).  
+- [ ] Run **Prompt 2** → Generate full design documentation.  
+- [ ] Save the documentation in `docs/design_system.md`.  
+- [ ] Reference it throughout development to maintain visual consistency.  
+- [ ] Link this design system to your `workflow_guide.md` → so every developer codes within your system’s boundaries.  
+- [ ] As the design evolves, record small adjustments in `steps.md` or deeper notes in `dev.md`.  
+
+---
+
+## 🧠 4. Design Quality Principles (The Senior Frontend Mindset)
+
+- [ ] **Intention over decoration.** Every visual element must have purpose.  
+- [ ] **Simplicity = Sophistication.** Avoid clutter; emphasize flow.  
+- [ ] **Consistency is king.** Reuse styles and components; don’t reinvent.  
+- [ ] **Readability > Cleverness.** Choose clarity over complexity.  
+- [ ] **Accessibility is non-negotiable.** Good design includes everyone.  
+- [ ] **Harmony over contrast.** Let colors, shapes, and motion support each other.  
+- [ ] **Whitespace is power.** Use empty space to highlight what matters.  
+- [ ] **Every detail communicates.** Padding, font weight, motion — all tell a story.  
+
+---
+
+## 🌈 5. Creative Flow Rules (Vibe Coding Principles for Frontend)
+
+- [ ] 🎵 Design and code like composing music — rhythm, flow, contrast, and silence matter.  
+- [ ] 🎯 Every screen should have one clear purpose; remove distractions.  
+- [ ] 🧘‍♂️ Never force creativity. Step away when stuck, return fresh.  
+- [ ] 🧩 Keep colors emotionally consistent with your message.  
+- [ ] 💬 If the UI can tell the story visually, don’t make users read.  
+- [ ] ⚡ Surprise with delight — subtle animations, playful microinteractions, clever transitions.  
+- [ ] 🌐 Build empathy — design for how users *feel*, not just what they *click*.  
+- [ ] 🧠 Think like an artist, code like an engineer, deliver like a craftsman.  
+
+---
+
+### 🪶 *Remember:*
+> Senior frontend developers don’t just design interfaces —  
+> they design **experiences** that feel inevitable, effortless, and unforgettable.

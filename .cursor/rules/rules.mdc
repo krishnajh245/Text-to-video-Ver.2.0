@@ -1,0 +1,171 @@
+---
+trigger: always_on
+alwaysApply: true
+---
+
+# 🧠 VIBE CODE WORKFLOW  
+### *Safety. Simplicity. Transparency. Senior-Level Discipline.*
+
+A workflow for developers who want to **code with intention, simplicity, and mastery** — ensuring that every line is **secure, transparent, and understandable** while keeping that *flow-state vibe* alive.
+
+---
+
+## ✅ 1. Core Workflow (Clarity + Structure)
+
+- [ ] 🧭 **Understand before you act.**  
+  Read relevant parts of the codebase thoroughly.
+
+- [ ] ✍️ **Plan clearly.**  
+  Write a task plan in `tasks/todo.md` — actionable steps only.
+
+- [ ] ❓ **Ask questions early.**  
+  Never assume. Always clarify before starting.
+
+- [ ] ⚙️ **Get plan approval.**  
+  Wait for verification before executing.
+
+- [ ] 🧾 **Work in checkpoints.**  
+  Mark tasks done in `todo.md` as you progress.
+
+- [ ] 🗣️ **Explain changes.**  
+  After each step, summarize what changed, why, and how — like teaching a junior.
+
+---
+
+## 🔒 2. Safety & Simplicity (No Reckless Moves)
+
+- [ ] ✂️ **Less is more.**  
+  Minimal code, maximum clarity.
+
+- [ ] 🧱 **Make reversible changes.**  
+  Small, atomic commits — always restorable.
+
+- [ ] 🧤 **Security-first mindset.**  
+  Never trust input. Never expose secrets.
+
+- [ ] 🚨 **Zero assumptions.**  
+  Validate, sanitize, and test before trusting anything.
+
+- [ ] 🔎 **Preflight checklist before commit:**  
+  - No `.env` or keys exposed  
+  - No hardcoded credentials or endpoints  
+  - No data leaks in logs or console  
+  - No dangerous functions (`eval`, `innerHTML`, etc.)
+
+- [ ] 🧼 **Readable like a story.**  
+  Code should explain itself without comments.
+
+---
+
+## 🎨 3. Clean Code & Developer Vibes
+
+- [ ] 💡 **Code should breathe.**  
+  Use whitespace and indentation to make logic readable.
+
+- [ ] 🧠 **Name things for humans.**  
+  Variables and functions should explain *why* they exist.
+
+- [ ] 🧩 **One purpose per function.**  
+  Split logic into clean, focused functions.
+
+- [ ] 🧭 **Avoid magic numbers/strings.**  
+  Define constants with meaningful names.
+
+- [ ] 🧹 **Keep it symmetrical.**  
+  Maintain clean, predictable folder and file structure.
+
+- [ ] 🧑‍🎨 **Aesthetic consistency.**  
+  Lint and format using project standards.
+
+- [ ] ⚖️ **Break rules only if you understand them deeply.**
+
+- [ ] 🧘 **Flow coding rule.**  
+  Never code in stress — pause, rethink, simplify.
+
+---
+
+## 📝 4. Documentation & Traceability
+
+- [ ] 🧾 **Update `todo.md`** with final notes and task summaries.  
+- [ ] 📚 **Add insights to `dev.md`.** Mention tricky parts, bugs, or fixes.  
+- [ ] 🪶 **Record small but crucial steps in `steps.md`.**  
+- [ ] 🧹 **Clean dead or duplicate code.**  
+- [ ] 🧠 **Document intent.** Explain *why*, not just *what*.  
+- [ ] 🧩 **Add small examples** for complex logic (regex, async flows, etc.).  
+
+---
+
+## 🧰 5. Professional Practices (Senior-Level Discipline)
+
+- [ ] 🔍 **Lint & Format.**  
+  Pass Prettier, ESLint, or Black before pushing.
+
+- [ ] 🧪 **Test everything.**  
+  Write unit or integration tests for new/changed code.
+
+- [ ] ⚙️ **Fail gracefully.**  
+  Handle undefineds, timeouts, and nulls safely.
+
+- [ ] 🚦 **Performance check.**  
+  Avoid unnecessary loops or rerenders.
+
+- [ ] 🧭 **Atomic commits.**  
+  One logical change per commit. Clear message.
+
+- [ ] 🔐 **Secrets discipline.**  
+  Use `.env` and `.gitignore`. Never hardcode.
+
+- [ ] 🧰 **Error logs = insights.**  
+  Log meaningfully, never sensitive data.
+
+- [ ] 🧼 **Dependency hygiene.**  
+  Justify every new library. Keep it light.
+
+- [ ] 🧩 **Environment parity.**  
+  Test locally in a staging-like setup.
+
+- [ ] 🚫 **No half-done work.**  
+  Resolve or explicitly track TODOs.
+
+- [ ] 📖 **Knowledge share.**  
+  Add discoveries or fixes to `dev.md`.
+
+---
+
+## 🧠 6. Clean Thinking Rules (Senior Mindset)
+
+- [ ] “Can someone new understand this code in 30 seconds?” — if not, simplify it.  
+- [ ] “Would I be proud to show this snippet in an interview?” — if not, rewrite it.  
+- [ ] “Can this code fail? If yes, how does it recover?”  
+- [ ] “Am I optimizing prematurely?” — readability before speed.  
+- [ ] “Is this necessary?” — delete the unnecessary ruthlessly.  
+- [ ] “Would future me thank me for this naming or comment?” — if not, fix it now.  
+
+---
+
+## 🚀 7. Final Pre-Merge Checklist
+
+- [ ] ✅ Code is simple, elegant, and readable.  
+- [ ] ✅ Security verified (no leaks, secrets, or unsafe ops).  
+- [ ] ✅ All tests pass successfully.  
+- [ ] ✅ Documentation updated (`todo.md`, `dev.md`, `README.md`).  
+- [ ] ✅ Performance impact checked.  
+- [ ] ✅ Commit history clear and atomic.  
+- [ ] ✅ Code *feels good* — elegant and intentional.  
+
+---
+
+## ⚡ 8. The Vibe Code Principles
+
+> 🔹 *If you can’t explain it simply, you don’t understand it yet.*  
+> 🔹 *If it’s not beautiful, it’s not done.*  
+> 🔹 *If it’s not reversible, it’s risky.*  
+> 🔹 *If it’s not documented, it doesn’t exist.*  
+> 🔹 *If it’s not secure, it’s broken.*  
+> 🔹 *If it doesn’t feel good to read, rewrite it.*  
+
+---
+
+### 🧘 *Remember:*  
+> Senior developers don’t just write code that works —  
+> they write code that **teaches**, **protects**, and **inspires confidence**.
