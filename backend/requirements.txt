@@ -11,21 +11,5 @@ huggingface_hub>=0.24.0
 diffusers>=0.31.0
 transformers>=4.45.0
 accelerate>=0.34.0
-# torch>=2.5.1+cu121: For security (CVE-2025-32434), prefer torch>=2.6 when available.
-# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-torch>=2.5.1
+torch>=2.6.0
 safetensors>=0.3.0
-fastapi>=0.110.0
-uvicorn[standard]>=0.29.0
-pydantic>=2.5.0
-pydantic-settings>=2.2.0
-httpx>=0.27.0
-requests>=2.31.0
-numpy>=1.24.0
-pillow>=10.0.0
-opencv-python>=4.9.0.80
-huggingface_hub>=0.24.0
-diffusers>=0.31.0
-transformers>=4.45.0
-accelerate>=0.34.0
-torch>=2.3.0
