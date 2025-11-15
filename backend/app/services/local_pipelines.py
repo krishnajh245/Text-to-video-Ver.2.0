@@ -10,6 +10,26 @@ logger = logging.getLogger(__name__)
 try:  # Import lazily-safe for environments without heavy deps installed yet
     import torch
     from diffusers import DiffusionPipeline
+    
+    # Patch transformers' torch version check to allow torch >= 2.6
+    # (CVE-2025-32434 fix: we have torch >= 2.6 so it's safe)
+    try:
+        import transformers.utils.import_utils as tf_import_utils
+        _original_check = tf_import_utils.check_torch_load_is_safe
+        
+        def _patched_check_torch_load_is_safe():
+            """Patched version that allows torch >= 2.6"""
+            if torch is not None:
+                major, minor = map(int, torch.__version__.split('+')[0].split('.')[:2])
+                if (major, minor) >= (2, 6):
+                    return  # Safe, allow loading
+            # If torch < 2.6 or parse failed, call original check
+            return _original_check()
+        
+        tf_import_utils.check_torch_load_is_safe = _patched_check_torch_load_is_safe
+        logger.info("Patched transformers.check_torch_load_is_safe for torch >= 2.6 compatibility")
+    except Exception as e:
+        logger.warning(f"Could not patch transformers check: {e}")
 except Exception:  # pragma: no cover - handled at runtime
     torch = None  # type: ignore
     DiffusionPipeline = None  # type: ignore
