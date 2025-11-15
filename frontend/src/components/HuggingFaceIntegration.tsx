@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
   Key, 
@@ -14,6 +14,7 @@ import Input from '@/components/ui/Input'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import Modal from '@/components/ui/Modal'
+import ProgressBar from '@/components/ui/ProgressBar'
 
 interface HuggingFaceModel {
   id: string
@@ -47,6 +48,11 @@ const HuggingFaceIntegration: React.FC<HuggingFaceIntegrationProps> = ({
   const [error, setError] = useState('')
   const [localCheck, setLocalCheck] = useState<Record<string, { downloaded: boolean; size_bytes: number }>>({})
   const [isDownloading, setIsDownloading] = useState<Record<string, boolean>>({})
+  const [showDownloadModal, setShowDownloadModal] = useState(false)
+  const [pendingDownload, setPendingDownload] = useState<{ key: string; repo: string } | null>(null)
+  const [downloadToken, setDownloadToken] = useState('')
+  const [showDownloadToken, setShowDownloadToken] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, { progress: number; message: string; status: string }>>({})
 
   const LOCAL_MAP: Record<string, string> = {
     'zeroscope-local': 'cerspense/zeroscope_v2_576w',
@@ -72,29 +78,158 @@ const HuggingFaceIntegration: React.FC<HuggingFaceIntegrationProps> = ({
 
   const handleLocalDownload = async (key: 'zeroscope-local' | 'modelscope-local') => {
     const repo = LOCAL_MAP[key]
-    setIsDownloading(prev => ({ ...prev, [key]: true }))
-    try {
-      // Immediate UI feedback for long-running download
+    // Show modal to ask for HF token
+    setPendingDownload({ key, repo })
+    setShowDownloadModal(true)
+    setDownloadToken('')
+    setError('')
+  }
+
+  const startDownload = async () => {
+    if (!pendingDownload) return
+    
+    const { key, repo } = pendingDownload
+    
+    // Validate token if provided
+    if (downloadToken.trim()) {
+      setIsVerifying(true)
       setError('')
+      try {
+        const res = await fetch('/hf-validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hf_token: downloadToken }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data?.valid) {
+          setError(data?.message || 'Invalid token')
+          setIsVerifying(false)
+          return
+        }
+      } catch (e: any) {
+        setError(e?.message || 'Token validation failed')
+        setIsVerifying(false)
+        return
+      }
+      setIsVerifying(false)
+    }
+    
+    // Start download
+    setIsDownloading(prev => ({ ...prev, [key]: true }))
+    setShowDownloadModal(false)
+    setError('')
+    
+    try {
       const res = await fetch('/models/local/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_id: repo })
+        body: JSON.stringify({ 
+          repo_id: repo,
+          hf_token: downloadToken.trim() || undefined
+        })
       })
+      
       if (!res.ok) {
-        const txt = await res.text()
-        throw new Error(txt || 'Download failed')
+        let errorMsg = 'Download failed'
+        try {
+          const errorData = await res.json()
+          errorMsg = errorData.detail || errorData.message || errorMsg
+        } catch {
+          const txt = await res.text()
+          errorMsg = txt || errorMsg
+        }
+        console.error('Download request failed:', errorMsg)
+        throw new Error(errorMsg)
       }
-      // After server completes, refresh status
-      await refreshLocalStatus()
+      
+      const data = await res.json()
+      console.log('Download started:', data)
+      
+      // Check if already downloaded
+      if (data.already_downloaded) {
+        setIsDownloading(prev => ({ ...prev, [key]: false }))
+        await refreshLocalStatus()
+        return
+      }
+      
+      const downloadId = data.download_id
+      if (!downloadId) {
+        throw new Error('No download ID returned')
+      }
+      
+      // Poll for progress
+      const pollProgress = async () => {
+        try {
+          const encodedId = encodeURIComponent(downloadId)
+          const progressRes = await fetch(`/models/local/download/${encodedId}/progress`)
+          if (!progressRes.ok) {
+            const errorText = await progressRes.text()
+            console.error('Progress check failed:', errorText)
+            throw new Error(errorText || 'Failed to get progress')
+          }
+          const progress = await progressRes.json()
+          console.log('Download progress:', progress)
+          
+          setDownloadProgress(prev => ({
+            ...prev,
+            [key]: {
+              progress: progress.progress || 0,
+              message: progress.message || 'Downloading...',
+              status: progress.status || 'downloading'
+            }
+          }))
+          
+          if (progress.status === 'completed') {
+            console.log('Download completed successfully')
+            setIsDownloading(prev => ({ ...prev, [key]: false }))
+            setDownloadProgress(prev => {
+              const next = { ...prev }
+              delete next[key]
+              return next
+            })
+            await refreshLocalStatus()
+          } else if (progress.status === 'failed') {
+            const errorMsg = progress.error || progress.message || progress.error_details || 'Download failed'
+            console.error('Download failed:', errorMsg)
+            setIsDownloading(prev => ({ ...prev, [key]: false }))
+            setDownloadProgress(prev => {
+              const next = { ...prev }
+              delete next[key]
+              return next
+            })
+            setError(errorMsg)
+          } else {
+            // Continue polling
+            setTimeout(pollProgress, 1000)
+          }
+        } catch (e: any) {
+          console.error('Progress polling error:', e)
+          setIsDownloading(prev => ({ ...prev, [key]: false }))
+          setDownloadProgress(prev => {
+            const next = { ...prev }
+            delete next[key]
+            return next
+          })
+          setError(e?.message || 'Progress check failed')
+        }
+      }
+      
+      // Start polling
+      setTimeout(pollProgress, 500)
     } catch (e: any) {
-      setError(e?.message || 'Download failed')
-    } finally {
+      console.error('Download error:', e)
+      const errorMsg = e?.message || e?.toString() || 'Download failed'
+      setError(errorMsg)
       setIsDownloading(prev => ({ ...prev, [key]: false }))
+      setDownloadProgress(prev => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
     }
   }
 
-  React.useEffect(() => {
+  useEffect(() => {
     refreshLocalStatus().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -224,9 +359,27 @@ const HuggingFaceIntegration: React.FC<HuggingFaceIntegrationProps> = ({
                 Using locally installed models for faster generation and privacy. You may need to download model files first.
                 Downloads can be large and take several minutes. Keep this tab open.
               </p>
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-3 p-3 bg-plasma-red/10 border border-plasma-red/20 rounded-lg"
+                >
+                  <div className="flex items-center gap-2">
+                    <XCircle className="h-4 w-4 text-plasma-red" />
+                    <span className="text-sm text-plasma-red">{error}</span>
+                  </div>
+                </motion.div>
+              )}
               {(isDownloading['zeroscope-local'] || isDownloading['modelscope-local']) && (
-                <div className="mb-3 p-2 rounded bg-aurora-blue/10 border border-aurora-blue/20 text-aurora-blue text-xs">
-                  Download in progress… this can take several minutes depending on your connection.
+                <div className="mb-3 p-3 rounded bg-aurora-blue/10 border border-aurora-blue/20">
+                  <div className="text-aurora-blue text-xs mb-2">
+                    {downloadProgress['zeroscope-local']?.message || downloadProgress['modelscope-local']?.message || 'Download in progress…'}
+                  </div>
+                  <ProgressBar 
+                    value={downloadProgress['zeroscope-local']?.progress || downloadProgress['modelscope-local']?.progress || 0}
+                    showPercentage={true}
+                  />
                 </div>
               )}
               
@@ -501,6 +654,95 @@ const HuggingFaceIntegration: React.FC<HuggingFaceIntegrationProps> = ({
               </div>
             </motion.div>
           ))}
+        </div>
+      </Modal>
+
+      {/* Download Token Modal */}
+      <Modal
+        isOpen={showDownloadModal}
+        onClose={() => {
+          setShowDownloadModal(false)
+          setPendingDownload(null)
+          setDownloadToken('')
+          setError('')
+        }}
+        title="Download Model"
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-moon-dust">
+            Some models require a Hugging Face API token to download. You can leave this blank if the model is public.
+          </p>
+          
+          <div>
+            <label className="block text-sm font-medium text-starlight mb-2">
+              Hugging Face API Key (Optional)
+            </label>
+            <div className="relative">
+              <Input
+                type={showDownloadToken ? 'text' : 'password'}
+                value={downloadToken}
+                onChange={setDownloadToken}
+                placeholder="Enter your Hugging Face API key (optional)..."
+                className="pr-20"
+              />
+              <button
+                type="button"
+                onClick={() => setShowDownloadToken(!showDownloadToken)}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-moon-dust hover:text-starlight transition-colors"
+              >
+                {showDownloadToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-moon-dust mt-1">
+              Get your API key from{' '}
+              <a
+                href="https://huggingface.co/settings/tokens"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-aurora-blue hover:underline inline-flex items-center gap-1"
+              >
+                Hugging Face Settings
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </p>
+          </div>
+
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-3 bg-plasma-red/10 border border-plasma-red/20 rounded-lg"
+            >
+              <div className="flex items-center gap-2">
+                <XCircle className="h-4 w-4 text-plasma-red" />
+                <span className="text-sm text-plasma-red">{error}</span>
+              </div>
+            </motion.div>
+          )}
+
+          <div className="flex gap-3">
+            <Button
+              onClick={() => {
+                setShowDownloadModal(false)
+                setPendingDownload(null)
+                setDownloadToken('')
+                setError('')
+              }}
+              variant="secondary"
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={startDownload}
+              disabled={isVerifying}
+              loading={isVerifying}
+              className="flex-1"
+            >
+              {isVerifying ? 'Validating...' : 'Start Download'}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { 
   Play, 
@@ -53,12 +53,22 @@ const HomePage: React.FC = () => {
   const [health, setHealth] = useState<{ status: string; version: string } | null>(null)
   const [hardware, setHardware] = useState<any>(null)
   const [performance, setPerformance] = useState<any>(null)
+  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isPollingRef = useRef(false)
 
   useEffect(() => {
     // Fetch backend status
     fetch('/health').then(r => r.ok ? r.json() : null).then(setHealth).catch(() => {})
     fetch('/hardware').then(r => r.ok ? r.json() : null).then(setHardware).catch(() => {})
     fetch('/performance').then(r => r.ok ? r.json() : null).then(setPerformance).catch(() => {})
+    
+    // Cleanup polling on unmount
+    return () => {
+      isPollingRef.current = false
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current)
+      }
+    }
   }, [])
   
   const handleInputChange = (field: keyof VideoGenerationRequest, value: string | number) => {
@@ -93,12 +103,20 @@ const HomePage: React.FC = () => {
 
     const width = formData.resolution
     const height = formData.resolution
+
+    // Cloud usage is explicitly controlled by the toggle.
     const use_hf_api = useHuggingFace
     const hf_token = use_hf_api ? (localStorage.getItem('hf_token') || '') : ''
     if (use_hf_api && !hf_token) {
       setErrors(["Hugging Face token is required. Add it via the HF toggle panel."])
       return
     }
+
+    // Local model key is used to hint which local preset should be used on the backend.
+    const local_model_key =
+      selectedModel && (selectedModel.id === 'zeroscope-local' || selectedModel.id === 'modelscope-local')
+        ? selectedModel.id
+        : undefined
 
     setIsGenerating(true)
     setProgress({
@@ -125,6 +143,7 @@ const HomePage: React.FC = () => {
           use_hf_api,
           hf_token: use_hf_api ? hf_token : undefined,
           hf_model_repo: use_hf_api ? selectedModel?.id : undefined,
+          local_model_key,
         }),
       })
       if (!res.ok) {
@@ -135,16 +154,44 @@ const HomePage: React.FC = () => {
       const jobId = start.job_id as string
       const videoId = start.video_id as string | undefined
 
+      // Initialize progress
+      setProgress({
+        percentage: 0,
+        message: 'Generation started...',
+        stage: 'initializing'
+      })
+      
+      // Clear any existing polling
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current)
+      }
+      isPollingRef.current = true
+      
       // Poll status
       const poll = async () => {
+        if (!isPollingRef.current) return
+        
         try {
           const r = await fetch(`/status/${jobId}`)
           if (!r.ok) throw new Error('Status check failed')
           const s = await r.json()
-          setProgress(prev => prev ? { ...prev, percentage: s.progress || 0, message: s.message || 'Processing...' } : prev)
+          
+          if (!isPollingRef.current) return
+          
+          setProgress({
+            percentage: s.progress || 0,
+            message: s.message || 'Processing...',
+            stage: s.status || 'processing'
+          })
+          
           if (s.status === 'completed') {
             setIsGenerating(false)
-            setProgress(null)
+            isPollingRef.current = false
+            setProgress({
+              percentage: 100,
+              message: 'Generation completed!',
+              stage: 'completed'
+            })
             const vid = s.video_id || videoId
             if (vid) {
               window.open(`/videos/${vid}/output.mp4`, '_blank')
@@ -153,16 +200,22 @@ const HomePage: React.FC = () => {
           }
           if (s.status === 'failed') {
             setIsGenerating(false)
+            isPollingRef.current = false
             setErrors([s.error || 'Generation failed'])
+            setProgress(null)
             return
           }
-          setTimeout(poll, 1000)
+          pollTimeoutRef.current = setTimeout(poll, 1000)
         } catch (e: any) {
-          setIsGenerating(false)
-          setErrors([e?.message || 'Status polling error'])
+          if (isPollingRef.current) {
+            setIsGenerating(false)
+            isPollingRef.current = false
+            setErrors([e?.message || 'Status polling error'])
+            setProgress(null)
+          }
         }
       }
-      setProgress(prev => prev ? { ...prev, message: 'Generation started...' } : prev)
+      
       poll()
     } catch (e: any) {
       setIsGenerating(false)

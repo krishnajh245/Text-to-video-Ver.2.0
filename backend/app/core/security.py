@@ -36,17 +36,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.requests_per_minute = requests_per_minute
         self.window = 60
         self.clients = {}
+        import threading
+        self._lock = threading.Lock()
 
     async def dispatch(self, request: Request, call_next):
         ip = request.client.host if request.client else "unknown"
         now = time.time()
         window_start = now - self.window
-        timestamps = self.clients.get(ip, [])
-        timestamps = [t for t in timestamps if t >= window_start]
-        if len(timestamps) >= self.requests_per_minute:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        timestamps.append(now)
-        self.clients[ip] = timestamps
+        
+        with self._lock:
+            timestamps = self.clients.get(ip, [])
+            timestamps = [t for t in timestamps if t >= window_start]
+            if len(timestamps) >= self.requests_per_minute:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+            timestamps.append(now)
+            self.clients[ip] = timestamps
+        
         return await call_next(request)
 
 

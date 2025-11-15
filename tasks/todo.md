@@ -96,6 +96,14 @@
 - [ ] **File Storage** - Video and metadata storage system
 - [ ] **API Integration** - Hugging Face API fallback for cloud processing
 
+#### 🔧 Current Backend Integration Task (Local + HF)
+- [ ] Wire `local_model_key` from frontend `/generate` calls into the FastAPI backend.
+- [ ] Implement real local pipelines for ZeroScope v2 and ModelScope T2V using `diffusers`/`torch` instead of placeholder frames.
+- [ ] Prefer local models when available; on failure or missing model, fall back to Hugging Face API when enabled.
+- [ ] Improve HF API robustness (router + classic Inference API fallback and clearer error messages).
+- [ ] Ensure GPU is used when available with safe CPU fallback and resolution/frame clamping.
+- [ ] Update documentation (`dev.md`, `README.md`) to describe local-first + HF fallback behavior.
+
 ### 🐛 Bug Fixes & Improvements
 - [ ] **Frontend Component Issues** - Implement missing components (HuggingFaceIntegration, EnhancedButton, EnhancedCard, AnimatedSection, ParticleBackground)
 - [ ] **Security Enhancements** - Implement proper API key validation and restrict CORS origins

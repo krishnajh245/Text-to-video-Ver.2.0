@@ -1,16 +1,15 @@
 import time
-from fastapi import FastAPI, Depends, HTTPException, Request
+import json
+import os
+from pathlib import Path
+from typing import Optional, List
+from fastapi import FastAPI, Depends, HTTPException, Request, Body, Query
 from pydantic import BaseModel
+from fastapi.responses import FileResponse
 
 from .core.config import settings, initialize_application
 from .core.security import setup_security_middleware, api_key_dependency
 from .utils.hardware import get_hardware_info, estimate_performance
-from fastapi import Body
-from pydantic import BaseModel
-from pathlib import Path
-import json
-from typing import Optional, List
-from fastapi.responses import FileResponse
 
 from .services.storage import get_video_storage
 from .services.generator import get_video_generator
@@ -97,8 +96,8 @@ async def generate(req: GenerateRequest = Body(...)):
         use_hf_api=req.use_hf_api,
         hf_token=req.hf_token,
         hf_model_repo=req.hf_model_repo,
-        # For local mode, we will pass the repo via hf_model_repo if provided by UI,
-        # while local_model_key can hint which preset was chosen.
+        # local_model_key indicates a specific local preset (e.g. zeroscope-local).
+        local_model_key=req.local_model_key,
         negative_prompt=req.negative_prompt,
         num_inference_steps=req.num_inference_steps,
         guidance_scale=req.guidance_scale,
@@ -111,7 +110,8 @@ async def generate(req: GenerateRequest = Body(...)):
 
 @app.get("/status/{job_id}")
 async def get_status(job_id: str):
-    status = generator.generation_status.get(job_id)
+    with generator._status_lock:
+        status = generator.generation_status.get(job_id)
     if not status:
         raise HTTPException(status_code=404, detail="Job not found")
     return status
@@ -141,7 +141,8 @@ async def serve_video_file(video_id: str):
                 frames.append(Image.open(f))
             except Exception:
                 continue
-        fps = video.get('params', {}).get('fps', 8)
+        params = video.get('params') or {}
+        fps = params.get('fps', 8)
         if not storage._create_video_file(video_dir, frames, fps):
             raise HTTPException(status_code=500, detail="Failed to create video file")
     if not output.exists():
@@ -239,7 +240,7 @@ async def trending_models():
 
 
 @app.get("/models/local/status")
-async def local_model_status(repo_id: str):
+async def local_model_status(repo_id: str = Query(..., description="Model repository ID")):
     """
     Check if a local model is downloaded and provide basic info.
     """
@@ -251,18 +252,126 @@ async def local_model_status(repo_id: str):
 
 class LocalModelDownloadRequest(BaseModel):
     repo_id: str
+    hf_token: Optional[str] = None
 
 
 @app.post("/models/local/download")
 async def local_model_download(req: LocalModelDownloadRequest):
     """
-    Download a model snapshot into the local models directory.
+    Start downloading a model snapshot into the local models directory.
+    Returns a download_id for progress tracking.
     """
     try:
-        info = model_registry.ensure_downloaded(req.repo_id)
-        return {"ok": True, "model": info}
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"Starting download request for {req.repo_id}")
+        
+        # Check if already downloaded
+        if model_registry.is_downloaded(req.repo_id):
+            info = model_registry.model_info(req.repo_id)
+            logger.info(f"Model {req.repo_id} already downloaded")
+            return {
+                "ok": True, 
+                "download_id": None,
+                "repo_id": req.repo_id,
+                "already_downloaded": True,
+                "model": info
+            }
+        
+        # Validate token if provided
+        if req.hf_token:
+            import requests
+            headers = {"Authorization": f"Bearer {req.hf_token}"}
+            r = requests.get("https://huggingface.co/api/whoami-v2", headers=headers, timeout=10)
+            if r.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid Hugging Face token")
+            logger.info("HF token validated successfully")
+        
+        download_id = model_registry.start_download(req.repo_id, req.hf_token)
+        logger.info(f"Download started with ID: {download_id}")
+        return {"ok": True, "download_id": download_id, "repo_id": req.repo_id}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Download request failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@app.get("/models/local/download/{download_id}/progress")
+async def get_download_progress(download_id: str):
+    """
+    Get download progress for a specific download_id.
+    Also supports querying by repo_id if download_id not found.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        progress = model_registry.get_download_progress(download_id)
+        
+        # If not found, try to find by repo_id (in case download_id format changed)
+        if not progress:
+            # Check if download_id might be a repo_id
+            progress = model_registry.get_download_progress_by_repo(download_id)
+            if progress:
+                logger.info(f"Found progress by repo_id: {download_id}")
+        
+        if not progress:
+            # Log all available download IDs for debugging
+            try:
+                with model_registry._progress_lock:
+                    available_ids = list(model_registry.download_progress.keys())
+                logger.warning(f"Download progress not found for ID: {download_id}. Available IDs: {available_ids[:5]}")
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Download not found: {download_id}. Available downloads: {len(available_ids)}"
+                )
+            except (AttributeError, Exception) as e:
+                # Fallback if lock access fails
+                logger.warning(f"Download progress not found for ID: {download_id}. Error: {e}")
+                raise HTTPException(status_code=404, detail=f"Download not found: {download_id}")
+        
+        logger.debug(f"Progress for {download_id}: {progress.get('status')} - {progress.get('message')}")
+        return progress
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting download progress: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting progress: {str(e)}")
+
+
+@app.get("/models/local/debug")
+async def debug_models():
+    """
+    Debug endpoint to check model registry status.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        base_dir = model_registry.base_dir
+        active_downloads = model_registry.list_active_downloads()
+        return {
+            "base_dir": str(base_dir),
+            "exists": base_dir.exists(),
+            "writable": os.access(base_dir, os.W_OK) if base_dir.exists() else False,
+            "models_dir_contents": [str(p.name) for p in base_dir.iterdir()] if base_dir.exists() else [],
+            "active_downloads": {
+                did: {
+                    "repo_id": prog.get("repo_id"),
+                    "status": prog.get("status"),
+                    "progress": prog.get("progress"),
+                    "message": prog.get("message")
+                }
+                for did, prog in active_downloads.items()
+            },
+            "active_download_count": len(active_downloads)
+        }
+    except Exception as e:
+        logger.error(f"Debug error: {e}", exc_info=True)
+        return {"error": str(e)}
 
 
 class HFApiTestRequest(BaseModel):

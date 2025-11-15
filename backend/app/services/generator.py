@@ -3,11 +3,14 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
+
 from ..core.config import settings
+from .models import get_local_model_registry
+from .local_pipelines import generate_local_video, resolve_local_repo_id
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +20,18 @@ class VideoGenerator:
         self.video_storage = video_storage
         self.hf_token: str | None = None
         self.generation_status: dict[str, dict[str, Any]] = {}
+        self._status_lock = threading.Lock()
+        # Local model registry is used lazily when a local model is requested.
+        self._model_registry = get_local_model_registry()
 
     def set_hf_token(self, token: str) -> None:
         self.hf_token = token
 
     def _update_generation_status(self, job_id: str, **kwargs) -> None:
-        status = self.generation_status.get(job_id, {})
-        status.update(kwargs)
-        self.generation_status[job_id] = status
+        with self._status_lock:
+            status = self.generation_status.get(job_id, {})
+            status.update(kwargs)
+            self.generation_status[job_id] = status
 
     def generate_video(
         self,
@@ -40,6 +47,7 @@ class VideoGenerator:
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         seed: int | None = None,
+        local_model_key: str | None = None,
     ) -> dict:
         job_id = str(uuid.uuid4())
         if not prompt or not prompt.strip():
@@ -61,6 +69,9 @@ class VideoGenerator:
             "guidance_scale": guidance_scale,
             "negative_prompt": negative_prompt,
             "seed": seed,
+            "local_model_key": local_model_key,
+            "hf_model_repo": hf_model_repo,
+            "use_hf_api": use_hf_api,
         }
 
         meta = self.video_storage.create_video_entry(params)
@@ -79,9 +90,23 @@ class VideoGenerator:
 
         thread = threading.Thread(
             target=self._generate_thread,
-            args=(job_id, video_id, prompt, num_frames, fps, width, height, use_hf_api, hf_token,
-                  hf_model_repo,
-                  negative_prompt, num_inference_steps, guidance_scale, seed),
+            args=(
+                job_id,
+                video_id,
+                prompt,
+                num_frames,
+                fps,
+                width,
+                height,
+                use_hf_api,
+                hf_token,
+                hf_model_repo,
+                negative_prompt,
+                num_inference_steps,
+                guidance_scale,
+                seed,
+                local_model_key,
+            ),
         )
         thread.start()
 
@@ -103,15 +128,59 @@ class VideoGenerator:
         num_inference_steps: int,
         guidance_scale: float,
         seed: int | None,
+        local_model_key: str | None,
     ) -> None:
         started = time.time()
         try:
             self._update_generation_status(job_id, status="processing", progress=10, message="Preparing request")
-            if use_hf_api:
-                self._update_generation_status(job_id, progress=25, message="Contacting Hugging Face Inference API")
+
+            frames = None
+            local_error: Optional[str] = None
+
+            # 1) Try local model first when requested.
+            if local_model_key:
+                try:
+                    self._update_generation_status(
+                        job_id,
+                        progress=20,
+                        message="Loading local model",
+                    )
+                    frames = self._generate_with_local_model(
+                        local_model_key,
+                        prompt,
+                        num_frames,
+                        width,
+                        height,
+                        negative_prompt,
+                        num_inference_steps,
+                        guidance_scale,
+                        seed,
+                    )
+                except Exception as e:
+                    local_error = str(e)
+                    logger.error("Local generation failed for %s: %s", local_model_key, e, exc_info=True)
+
+            # 2) If no frames yet, and HF is enabled, fall back to HF API.
+            if frames is None and use_hf_api:
+                if local_model_key and local_error:
+                    self._update_generation_status(
+                        job_id,
+                        progress=30,
+                        message="Local model unavailable, falling back to Hugging Face",
+                    )
+                else:
+                    self._update_generation_status(job_id, progress=30, message="Contacting Hugging Face Inference API")
+
                 result = self._generate_with_hf_api(
-                    prompt, num_frames, width, height, hf_token or self.hf_token,
-                    negative_prompt, num_inference_steps, guidance_scale, seed,
+                    prompt,
+                    num_frames,
+                    width,
+                    height,
+                    hf_token or self.hf_token,
+                    negative_prompt,
+                    num_inference_steps,
+                    guidance_scale,
+                    seed,
                     model_repo=hf_model_repo,
                 )
                 if isinstance(result, dict) and "video_bytes" in result:
@@ -128,16 +197,19 @@ class VideoGenerator:
                     # Some models may return an image sequence instead of a video
                     self._update_generation_status(job_id, progress=55, message="Processing frames from API")
                     frames = result
-            else:
-                # Local mode - try real local model if downloaded; otherwise placeholder
-                self._update_generation_status(job_id, progress=30, message="Preparing local model")
-                # In this version, we map presence of a downloaded model repo via params in storage metadata
-                # If hf_model_repo was provided and looks downloaded, we could branch differently later
-                frames = self._generate_with_local_model(hf_model_repo or "local-preset", prompt, num_frames, width, height)
+
+            # 3) If still no frames and no HF allowed, either bubble local error or use placeholder.
+            if frames is None and not use_hf_api:
+                if local_error:
+                    raise RuntimeError(local_error)
+                # Fallback to placeholder motion to keep pipeline functional.
+                self._update_generation_status(job_id, progress=30, message="Using placeholder local generator")
+                frames = self._create_placeholder_frames(width, height, num_frames, prompt)
 
             if frames is None:
                 # Frames already extracted from saved video
-                saved = self.video_storage.get_video(video_id) and self.video_storage.get_video(video_id).get("frame_count", 0)
+                video_meta = self.video_storage.get_video(video_id)
+                saved = video_meta.get("frame_count", 0) if video_meta else 0
                 if not saved:
                     # If not updated yet, try to count on disk
                     video_dir = Path(self.video_storage.storage_base_path) / video_id
@@ -252,13 +324,54 @@ class VideoGenerator:
         frames = self._create_motion_from_base(base, num_frames)
         return frames
 
-    def _generate_with_local_model(self, model_key: str, prompt: str, num_frames: int, width: int, height: int):
+    def _generate_with_local_model(
+        self,
+        local_model_key: str,
+        prompt: str,
+        num_frames: int,
+        width: int,
+        height: int,
+        negative_prompt: str | None,
+        num_inference_steps: int,
+        guidance_scale: float,
+        seed: int | None,
+    ):
+        """Generate frames using a real local text-to-video model.
+
+        This uses the LocalModelRegistry to locate the downloaded model on disk,
+        then runs the appropriate diffusers pipeline via `generate_local_video`.
         """
-        Placeholder local generation hook.
-        In future, load and run real local pipelines (zeroscope/modelscope) here.
-        For now, reuse placeholder frames to keep UX consistent after model download.
-        """
-        return self._create_placeholder_frames(width, height, num_frames, prompt)
+        repo_id = resolve_local_repo_id(local_model_key)
+        if not repo_id:
+            raise RuntimeError(f"Unknown local model key: {local_model_key}")
+
+        registry = self._model_registry
+        info = registry.model_info(repo_id)
+        if not info.get("downloaded"):
+            raise RuntimeError(
+                f"Local model '{repo_id}' is not downloaded. Trigger a download from the UI before using it."
+            )
+
+        model_path = info.get("path")
+        if not model_path:
+            raise RuntimeError(f"Local model path not recorded for repo '{repo_id}'.")
+
+        model_dir = Path(model_path)
+        if not model_dir.exists():
+            raise RuntimeError(f"Local model directory does not exist on disk: {model_dir}")
+
+        return generate_local_video(
+            model_key=local_model_key,
+            repo_dir=model_dir,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_frames=num_frames,
+            width=width,
+            height=height,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            seed=seed,
+        )
 
     def _enhance_image(self, image: Image.Image) -> Image.Image:
         try:
@@ -367,10 +480,12 @@ class VideoGenerator:
             pass
         try:
             meta = self.video_storage.get_video(video_id) or {}
-            fps = (meta.get('params', {}) or {}).get('fps', 8)
+            params = meta.get('params') or {}
+            fps = params.get('fps', 8)
             # Only stitch video if we actually saved frames
+            # Pass None to let _create_video_file check for frame files on disk
             if saved > 0:
-                self.video_storage._create_video_file(video_dir, [], fps)
+                self.video_storage._create_video_file(video_dir, None, fps)
         except Exception as e:
             logger.error(f"Error creating video file: {e}")
         return saved

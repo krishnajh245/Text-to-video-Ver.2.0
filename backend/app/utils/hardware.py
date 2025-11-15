@@ -27,7 +27,7 @@ def _torch_info():
             "versions": {
                 "torch": torch.__version__,
                 "cuda": getattr(torch.version, 'cuda', None),
-                "cudnn": getattr(torch.backends.cudnn, 'version', lambda: None)(),
+                "cudnn": getattr(torch.backends.cudnn, 'version', None) if hasattr(torch.backends.cudnn, 'version') else None,
             }
         }
     except Exception:

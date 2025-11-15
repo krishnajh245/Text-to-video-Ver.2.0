@@ -113,10 +113,21 @@ venv.bak/
 # AI Models and generated content
 models/
 generated_videos/
+backend/video-gen-models/
+backend/videos/
+backend/app/__pycache__/
+backend/**/*.pyc
+videos/
 *.mp4
 *.avi
 *.mov
 *.wmv
+
+# Local runtime caches
+*.lockb
+*.lock.json
+.cache/
+.mypy_cache/
 
 # Database files
 *.db

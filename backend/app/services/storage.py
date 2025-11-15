@@ -4,6 +4,7 @@ Video storage service for managing generated videos and metadata.
 import os
 import json
 import logging
+import threading
 from pathlib import Path
 from datetime import datetime
 import uuid
@@ -19,6 +20,7 @@ class VideoStorage:
             self.storage_base_path = storage_base_path
         os.makedirs(self.storage_base_path, exist_ok=True)
         self.metadata_file = os.path.join(self.storage_base_path, "metadata.json")
+        self._metadata_lock = threading.Lock()
         self._load_metadata()
         logger.info(f"VideoStorage initialized at {self.storage_base_path}")
 
@@ -35,8 +37,9 @@ class VideoStorage:
 
     def _save_metadata(self) -> None:
         try:
-            with open(self.metadata_file, 'w') as f:
-                json.dump(self.metadata, f, indent=2)
+            with self._metadata_lock:
+                with open(self.metadata_file, 'w') as f:
+                    json.dump(self.metadata, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving metadata: {e}")
 
@@ -52,7 +55,8 @@ class VideoStorage:
             }
             video_dir = os.path.join(self.storage_base_path, video_id)
             os.makedirs(video_dir, exist_ok=True)
-            self.metadata[video_id] = video_metadata
+            with self._metadata_lock:
+                self.metadata[video_id] = video_metadata
             self._save_metadata()
             return video_metadata
         except Exception as e:
@@ -61,9 +65,10 @@ class VideoStorage:
 
     def update_video_frames(self, video_id: str, frame_count: int) -> bool:
         try:
-            if video_id not in self.metadata:
-                return False
-            self.metadata[video_id]["frame_count"] = frame_count
+            with self._metadata_lock:
+                if video_id not in self.metadata:
+                    return False
+                self.metadata[video_id]["frame_count"] = frame_count
             self._save_metadata()
             return True
         except Exception as e:
@@ -72,23 +77,26 @@ class VideoStorage:
 
     def list_videos(self) -> list[dict]:
         try:
-            return list(self.metadata.values())
+            with self._metadata_lock:
+                return list(self.metadata.values())
         except Exception as e:
             logger.error(f"Error listing videos: {e}")
             return []
 
     def get_video(self, video_id: str) -> dict | None:
         try:
-            return self.metadata.get(video_id)
+            with self._metadata_lock:
+                return self.metadata.get(video_id)
         except Exception as e:
             logger.error(f"Error getting video {video_id}: {e}")
             return None
 
     def delete_video(self, video_id: str) -> bool:
         try:
-            if video_id not in self.metadata:
-                return False
-            del self.metadata[video_id]
+            with self._metadata_lock:
+                if video_id not in self.metadata:
+                    return False
+                del self.metadata[video_id]
             self._save_metadata()
             video_dir = os.path.join(self.storage_base_path, video_id)
             if os.path.exists(video_dir):
@@ -99,70 +107,71 @@ class VideoStorage:
             logger.error(f"Error deleting video {video_id}: {e}")
             return False
 
-    def _create_video_file(self, video_dir: Path, frames: list, fps: int = 30) -> bool:
+    def _create_video_file(self, video_dir: Path, frames: list | None, fps: int = 30) -> bool:
         try:
             import cv2
             import numpy as np
             from PIL import Image
 
-            if not frames:
-                return False
-            if frames and isinstance(frames[0], Image.Image):
-                frame_arrays = []
-                for frame in frames:
-                    try:
-                        arr = np.array(frame)
-                        if arr is None or arr.size == 0:
+            # If frames list is provided and not empty, use those frames
+            if frames and len(frames) > 0:
+                if isinstance(frames[0], Image.Image):
+                    frame_arrays = []
+                    for frame in frames:
+                        try:
+                            arr = np.array(frame)
+                            if arr is None or arr.size == 0:
+                                continue
+                            if len(arr.shape) == 3 and arr.shape[2] == 3:
+                                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                            frame_arrays.append(arr)
+                        except Exception:
                             continue
-                        if len(arr.shape) == 3 and arr.shape[2] == 3:
-                            arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-                        frame_arrays.append(arr)
-                    except Exception:
-                        continue
-                if not frame_arrays:
-                    return False
-                height, width = frame_arrays[0].shape[:2]
-                if height <= 0 or width <= 0:
-                    return False
-                output_path = os.path.join(video_dir, "output.mp4")
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-                if not writer.isOpened():
-                    return False
-                written = 0
-                for a in frame_arrays:
-                    if a.shape[1] != width or a.shape[0] != height:
-                        a = cv2.resize(a, (width, height))
-                    writer.write(a)
-                    written += 1
-                writer.release()
-                return written > 0
-            else:
-                frame_files = sorted([f for f in Path(video_dir).glob("frame_*.png")])
-                if not frame_files:
-                    return False
-                first = cv2.imread(str(frame_files[0]))
-                if first is None:
-                    return False
-                h, w = first.shape[:2]
-                if h <= 0 or w <= 0:
-                    return False
-                output_path = os.path.join(video_dir, "output.mp4")
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-                if not writer.isOpened():
-                    return False
-                written = 0
-                for f in frame_files:
-                    img = cv2.imread(str(f))
-                    if img is None:
-                        continue
-                    if img.shape[1] != w or img.shape[0] != h:
-                        img = cv2.resize(img, (w, h))
-                    writer.write(img)
-                    written += 1
-                writer.release()
-                return written > 0
+                    if not frame_arrays:
+                        return False
+                    height, width = frame_arrays[0].shape[:2]
+                    if height <= 0 or width <= 0:
+                        return False
+                    output_path = os.path.join(video_dir, "output.mp4")
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                    if not writer.isOpened():
+                        return False
+                    written = 0
+                    for a in frame_arrays:
+                        if a.shape[1] != width or a.shape[0] != height:
+                            a = cv2.resize(a, (width, height))
+                        writer.write(a)
+                        written += 1
+                    writer.release()
+                    return written > 0
+            
+            # Otherwise, check for frame files on disk
+            frame_files = sorted([f for f in Path(video_dir).glob("frame_*.png")])
+            if not frame_files:
+                return False
+            first = cv2.imread(str(frame_files[0]))
+            if first is None:
+                return False
+            h, w = first.shape[:2]
+            if h <= 0 or w <= 0:
+                return False
+            output_path = os.path.join(video_dir, "output.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+            if not writer.isOpened():
+                return False
+            written = 0
+            for f in frame_files:
+                img = cv2.imread(str(f))
+                if img is None:
+                    continue
+                if img.shape[1] != w or img.shape[0] != h:
+                    img = cv2.resize(img, (w, h))
+                writer.write(img)
+                written += 1
+            writer.release()
+            return written > 0
         except Exception as e:
             logger.error(f"Error creating video file: {e}")
             return False
