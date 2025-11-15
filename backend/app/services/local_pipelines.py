@@ -62,11 +62,21 @@ def _get_pipeline(local_model_key: str, repo_dir: Path):
 
     logger.info("Loading local pipeline '%s' from %s on %s", local_model_key, repo_dir, device)
 
-    pipe = DiffusionPipeline.from_pretrained(
-        repo_dir,
-        torch_dtype=dtype,
-        use_safetensors=True,
-    )
+    # Try to load with safetensors first (CVE-2025-32434 safe), fallback to .pt files if unavailable
+    try:
+        pipe = DiffusionPipeline.from_pretrained(
+            repo_dir,
+            torch_dtype=dtype,
+            use_safetensors=True,
+        )
+        logger.info("Loaded pipeline using safetensors (secure)")
+    except Exception as e:
+        logger.warning("Safetensors not available (%s), falling back to .pt files", str(e))
+        pipe = DiffusionPipeline.from_pretrained(
+            repo_dir,
+            torch_dtype=dtype,
+            use_safetensors=False,
+        )
 
     pipe.to(device)
 
