@@ -65,6 +65,7 @@ def _get_pipeline(local_model_key: str, repo_dir: Path):
     pipe = DiffusionPipeline.from_pretrained(
         repo_dir,
         torch_dtype=dtype,
+        use_safetensors=True,
     )
 
     pipe.to(device)
