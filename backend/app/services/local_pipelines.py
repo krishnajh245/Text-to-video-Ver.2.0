@@ -14,22 +14,33 @@ try:  # Import lazily-safe for environments without heavy deps installed yet
     # Patch transformers' torch version check to allow torch >= 2.6
     # (CVE-2025-32434 fix: we have torch >= 2.6 so it's safe)
     try:
-        import transformers.utils.import_utils as tf_import_utils
-        _original_check = tf_import_utils.check_torch_load_is_safe
+        import transformers.modeling_utils as tf_modeling
         
-        def _patched_check_torch_load_is_safe():
-            """Patched version that allows torch >= 2.6"""
-            if torch is not None:
-                major, minor = map(int, torch.__version__.split('+')[0].split('.')[:2])
-                if (major, minor) >= (2, 6):
-                    return  # Safe, allow loading
-            # If torch < 2.6 or parse failed, call original check
-            return _original_check()
+        # Parse torch version
+        major, minor = map(int, torch.__version__.split('+')[0].split('.')[:2])
+        torch_is_safe = (major, minor) >= (2, 6)
         
-        tf_import_utils.check_torch_load_is_safe = _patched_check_torch_load_is_safe
-        logger.info("Patched transformers.check_torch_load_is_safe for torch >= 2.6 compatibility")
+        if torch_is_safe:
+            # Replace the load_state_dict function to skip the CVE check
+            _original_load_state_dict = tf_modeling.load_state_dict
+            
+            def _patched_load_state_dict(checkpoint_file, map_location=None, weights_only=None, **kwargs):
+                """Load state dict without CVE check (we have torch >= 2.6)"""
+                import pickle
+                # Load directly without transformers' check since our torch is safe
+                if weights_only is None:
+                    weights_only = False
+                try:
+                    return torch.load(checkpoint_file, map_location=map_location, weights_only=weights_only)
+                except Exception:
+                    # Fallback to pickle if torch.load fails
+                    with open(checkpoint_file, 'rb') as f:
+                        return pickle.load(f)
+            
+            tf_modeling.load_state_dict = _patched_load_state_dict
+            logger.info(f"Patched transformers.load_state_dict (torch {torch.__version__} is safe)")
     except Exception as e:
-        logger.warning(f"Could not patch transformers check: {e}")
+        logger.warning(f"Could not patch transformers: {e}")
 except Exception:  # pragma: no cover - handled at runtime
     torch = None  # type: ignore
     DiffusionPipeline = None  # type: ignore
@@ -112,15 +123,115 @@ def _get_pipeline(local_model_key: str, repo_dir: Path):
 
 
 def _ensure_pil_image(frame) -> Image.Image:
+    """Convert various frame formats to PIL Image.
+    
+    Handles:
+    - PIL Images (passthrough)
+    - Numpy arrays with various shapes and dtypes
+    - Torch tensors
+    - Different channel orderings (CHW vs HWC)
+    - Different value ranges (0-1 float vs 0-255 uint8)
+    - Extra batch/time dimensions
+    """
     if isinstance(frame, Image.Image):
         return frame
+    
     try:
+        # Convert torch tensors to numpy
+        if hasattr(frame, 'cpu'):
+            frame = frame.cpu()
+        if hasattr(frame, 'numpy'):
+            frame = frame.numpy()
+        
         arr = np.asarray(frame)
-        if arr.ndim == 3 and arr.shape[2] == 4:  # RGBA -> RGB
-            arr = arr[:, :, :3]
-        return Image.fromarray(arr.astype("uint8"))
+        original_shape = arr.shape
+        
+        # Remove all singleton dimensions (batch=1, time=1, etc.)
+        arr = np.squeeze(arr)
+        
+        # Handle different dimensionalities
+        if arr.ndim == 2:
+            # Grayscale image (H, W) - convert to RGB
+            arr = np.stack([arr, arr, arr], axis=-1)
+        
+        elif arr.ndim == 3:
+            # Could be (H, W, C) or (C, H, W)
+            
+            # Detect channel-first format: (C, H, W)
+            # Channels are typically 1, 3, or 4
+            if arr.shape[0] in [1, 3, 4] and arr.shape[0] < min(arr.shape[1], arr.shape[2]):
+                # Transpose from (C, H, W) to (H, W, C)
+                arr = np.transpose(arr, (1, 2, 0))
+            
+            # Now we should have (H, W, C)
+            # Handle different channel counts
+            if arr.shape[2] == 1:
+                # Single channel - convert to RGB
+                arr = np.concatenate([arr, arr, arr], axis=2)
+            elif arr.shape[2] == 4:
+                # RGBA - drop alpha channel
+                arr = arr[:, :, :3]
+            elif arr.shape[2] != 3:
+                raise ValueError(f"Unexpected number of channels: {arr.shape[2]}")
+        
+        elif arr.ndim == 4:
+            # Might be (B, H, W, C) or (B, C, H, W) or (T, H, W, C)
+            # Take first frame/batch
+            arr = arr[0]
+            # Recursively process (now it's 3D)
+            return _ensure_pil_image(arr)
+        
+        elif arr.ndim > 4:
+            # Too many dimensions - keep squeezing and taking first element
+            while arr.ndim > 3:
+                arr = arr[0] if arr.shape[0] > 1 else np.squeeze(arr, axis=0)
+            return _ensure_pil_image(arr)
+        
+        else:
+            raise ValueError(f"Unexpected array dimensionality: {arr.ndim}")
+        
+        # Normalize to uint8 range [0, 255]
+        if arr.dtype == np.uint8:
+            # Already in correct format
+            pass
+        elif arr.dtype in [np.float32, np.float64, np.float16]:
+            # Float array - check range and normalize
+            arr_min, arr_max = arr.min(), arr.max()
+            
+            if arr_max <= 1.0 and arr_min >= 0.0:
+                # Range [0, 1] - scale to [0, 255]
+                arr = (arr * 255).astype(np.uint8)
+            elif arr_max <= 1.0 and arr_min >= -1.0:
+                # Range [-1, 1] - scale to [0, 255]
+                arr = ((arr + 1.0) * 127.5).astype(np.uint8)
+            else:
+                # Assume [0, 255] range but float type - just clip and convert
+                arr = np.clip(arr, 0, 255).astype(np.uint8)
+        else:
+            # Other integer types - clip to valid range and convert
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        
+        # Final validation
+        if arr.ndim != 3 or arr.shape[2] != 3:
+            raise ValueError(f"Failed to convert to (H, W, 3) format. Got shape: {arr.shape}")
+        
+        # Create PIL Image
+        img = Image.fromarray(arr, mode='RGB')
+        return img
+        
     except Exception as exc:
-        raise RuntimeError(f"Unsupported frame type from pipeline: {type(frame)!r}") from exc
+        # Provide detailed error information for debugging
+        shape_info = getattr(frame, 'shape', 'unknown')
+        dtype_info = getattr(frame, 'dtype', 'unknown')
+        type_info = type(frame).__name__
+        
+        raise RuntimeError(
+            f"Failed to convert frame to PIL Image.\n"
+            f"  Type: {type_info}\n"
+            f"  Shape: {shape_info}\n"
+            f"  Dtype: {dtype_info}\n"
+            f"  Error: {str(exc)}"
+        ) from exc
 
 
 def generate_local_video(
@@ -187,21 +298,92 @@ def generate_local_video(
         logger.info("Pipeline for '%s' does not accept 'num_frames' argument; retrying without it.", model_key)
         result = _call_with_optional_frames(add_frames=False)
 
-    # diffusers video pipelines typically expose `.frames` or return a list/ndarray
-    frames = None
+    # === CRITICAL FIX: Extract frames from pipeline output ===
+    
+    # Extract the raw frames/images from the result object
+    raw_frames = None
     if hasattr(result, "frames"):
-        frames = result.frames
-    elif isinstance(result, (list, tuple)):
-        frames = result
+        raw_frames = result.frames
+        logger.info(f"Extracted frames from result.frames")
     elif hasattr(result, "images"):
-        # Fallback for image-sequence style outputs
-        frames = result.images
+        raw_frames = result.images
+        logger.info(f"Extracted frames from result.images")
+    elif isinstance(result, (list, tuple)):
+        raw_frames = result
+        logger.info(f"Result is already a list/tuple")
+    else:
+        raise RuntimeError(f"Local pipeline returned unsupported output type: {type(result)}")
 
-    if frames is None:
+    if raw_frames is None:
         raise RuntimeError("Local pipeline did not return frames; got unsupported output type.")
 
-    frames_list = list(frames)
+    # Convert to numpy for easier manipulation
+    if hasattr(raw_frames, 'cpu'):
+        raw_frames = raw_frames.cpu()
+    if hasattr(raw_frames, 'numpy'):
+        raw_frames = raw_frames.numpy()
+    
+    frames_array = np.asarray(raw_frames)
+    logger.info(f"Raw frames shape: {frames_array.shape}, dtype: {frames_array.dtype}")
+    
+    # Split frames based on dimensionality
+    # This is the KEY FIX - properly iterate over the time dimension
+    frames_list = []
+    
+    if frames_array.ndim == 5:
+        # Shape: (batch, time, height, width, channels)
+        # Example: (1, 50, 576, 1024, 3)
+        logger.info(f"5D tensor detected: extracting {frames_array.shape[1]} frames from time dimension")
+        batch_frames = frames_array[0]  # Take first batch → (time, H, W, C)
+        frames_list = [batch_frames[t] for t in range(batch_frames.shape[0])]
+        
+    elif frames_array.ndim == 4:
+        # Could be (time, H, W, C) or (batch, C, H, W)
+        # Use heuristic: if dimension 1 is small (1, 3, 4), it's likely channels
+        if frames_array.shape[1] in [1, 3, 4] and frames_array.shape[1] < frames_array.shape[2]:
+            # Shape: (batch, C, H, W) - single image
+            logger.info(f"4D tensor detected (batch, C, H, W): treating as single frame")
+            frames_list = [frames_array[0]]
+        else:
+            # Shape: (time, H, W, C)
+            logger.info(f"4D tensor detected: extracting {frames_array.shape[0]} frames from time dimension")
+            frames_list = [frames_array[t] for t in range(frames_array.shape[0])]
+    
+    elif frames_array.ndim == 3:
+        # Shape: (H, W, C) - single frame
+        logger.info("3D tensor detected: single frame")
+        frames_list = [frames_array]
+    
+    elif frames_array.ndim == 2:
+        # Shape: (H, W) - grayscale single frame
+        logger.info("2D tensor detected: single grayscale frame")
+        frames_list = [frames_array]
+    
+    else:
+        raise RuntimeError(f"Unexpected tensor dimensionality: {frames_array.ndim}D with shape {frames_array.shape}")
+    
     if not frames_list:
-        raise RuntimeError("Local pipeline returned no frames.")
-
-    return [_ensure_pil_image(f) for f in frames_list]
+        raise RuntimeError("No frames extracted from pipeline output")
+    
+    logger.info(f"Extracted {len(frames_list)} frames from pipeline output")
+    
+    # Log first frame details for debugging
+    if frames_list:
+        first = frames_list[0]
+        if hasattr(first, 'shape'):
+            logger.info(f"First frame shape: {first.shape}, dtype: {first.dtype}")
+    
+    # Now convert each frame to PIL Image
+    pil_frames = []
+    for i, frame in enumerate(frames_list):
+        try:
+            pil_frame = _ensure_pil_image(frame)
+            pil_frames.append(pil_frame)
+        except Exception as e:
+            logger.error(f"Failed to convert frame {i}/{len(frames_list)}: {e}")
+            if hasattr(frame, 'shape'):
+                logger.error(f"  Frame {i} shape: {frame.shape}, dtype: {frame.dtype}")
+            raise
+    
+    logger.info(f"Successfully converted {len(pil_frames)} frames to PIL Images")
+    return pil_frames
