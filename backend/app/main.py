@@ -119,7 +119,42 @@ async def get_status(job_id: str):
 
 @app.get("/videos")
 async def list_videos():
-    return storage.list_videos()
+    """List only videos that actually have a folder and either frames or an output.mp4 file.
+
+    This avoids returning stale metadata entries for jobs that never produced files,
+    which would cause 404s when the frontend requests /videos/{id}/output.mp4.
+    """
+    videos = storage.list_videos()
+    existing: list[dict] = []
+    base = Path(storage.storage_base_path)
+    for v in videos:
+        vid = v.get("id") if isinstance(v, dict) else None
+        if not vid:
+            continue
+        video_dir = base / str(vid)
+        if not video_dir.exists():
+            continue
+        output = video_dir / "output.mp4"
+        has_output = output.exists()
+        has_frames = any(video_dir.glob("frame_*.png"))
+        if has_output or has_frames:
+            existing.append(v)
+    return existing
+
+
+@app.get("/videos/{video_id}")
+async def get_video_metadata(video_id: str):
+    video = storage.get_video(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+
+@app.delete("/videos/{video_id}")
+async def delete_video(video_id: str):
+    if not storage.delete_video(video_id):
+        raise HTTPException(status_code=404, detail="Video not found or already deleted")
+    return {"ok": True, "id": video_id}
 
 
 @app.get("/videos/{video_id}/output.mp4")

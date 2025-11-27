@@ -493,5 +493,3 @@ class VideoGenerator:
 
 def get_video_generator(video_storage) -> VideoGenerator:
     return VideoGenerator(video_storage)
-
-

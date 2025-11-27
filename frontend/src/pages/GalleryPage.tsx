@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
   Search, 
@@ -18,55 +18,6 @@ import Modal from '@/components/ui/Modal'
 import { VideoMetadata, SearchFilters } from '@/types'
 import { formatRelativeTime, formatFileSize, formatDuration } from '@/utils'
 
-// Mock data for demonstration
-const mockVideos: VideoMetadata[] = [
-  {
-    id: '1',
-    prompt: 'A majestic eagle soaring over a mountain range at sunset',
-    model: 'zeroscope',
-    resolution: 512,
-    frames: 24,
-    fps: 8,
-    inferenceSteps: 50,
-    guidanceScale: 7.5,
-    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    duration: 3,
-    fileSize: 2048576,
-    videoUrl: '/api/videos/1.mp4',
-    thumbnailUrl: '/api/thumbnails/1.jpg'
-  },
-  {
-    id: '2',
-    prompt: 'A futuristic city with flying cars and neon lights',
-    model: 'modelscope',
-    resolution: 768,
-    frames: 48,
-    fps: 12,
-    inferenceSteps: 30,
-    guidanceScale: 8.0,
-    createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-    duration: 4,
-    fileSize: 4097152,
-    videoUrl: '/api/videos/2.mp4',
-    thumbnailUrl: '/api/thumbnails/2.jpg'
-  },
-  {
-    id: '3',
-    prompt: 'Ocean waves crashing against rocky cliffs in slow motion',
-    model: 'zeroscope',
-    resolution: 1024,
-    frames: 60,
-    fps: 15,
-    inferenceSteps: 75,
-    guidanceScale: 6.5,
-    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    duration: 4,
-    fileSize: 8194304,
-    videoUrl: '/api/videos/3.mp4',
-    thumbnailUrl: '/api/thumbnails/3.jpg'
-  }
-]
-
 const GalleryPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [filters, setFilters] = useState<SearchFilters>({
@@ -75,12 +26,65 @@ const GalleryPage: React.FC = () => {
     sortBy: 'newest',
     sortOrder: 'desc'
   })
-  // selectedVideo state removed (unused)
+  const [videos, setVideos] = useState<VideoMetadata[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null)
-  
+
+  useEffect(() => {
+    const fetchVideos = async () => {
+      try {
+        setError(null)
+        setLoading(true)
+        const res = await fetch('/videos')
+        if (!res.ok) {
+          throw new Error('Failed to load videos')
+        }
+        const data = await res.json()
+        const mapped: VideoMetadata[] = (Array.isArray(data) ? data : []).map((item: any) => {
+          const params = item?.params || {}
+          const frames = Number(item?.frame_count || params.num_frames || 0)
+          const fps = Number(params.fps || 8)
+          const width = Number(params.width || params.resolution || 512)
+          const height = Number(params.height || params.resolution || 512)
+          const resolution = Math.max(width, height) || 512
+          const duration = fps > 0 && frames > 0 ? frames / fps : 0
+          const modelKey = params.local_model_key as string | undefined
+          const model = modelKey === 'modelscope-local' ? 'modelscope' : 'zeroscope'
+          return {
+            id: String(item.id),
+            prompt: params.prompt || 'Generated video',
+            negativePrompt: params.negative_prompt,
+            model,
+            resolution,
+            frames,
+            fps,
+            inferenceSteps: Number(params.num_inference_steps || 0),
+            guidanceScale: Number(params.guidance_scale || 0),
+            createdAt: String(item.created_at || new Date().toISOString()),
+            duration,
+            fileSize: 0,
+            thumbnailUrl: `/videos/${item.id}/thumbnail.jpg`,
+            videoUrl: `/videos/${item.id}/output.mp4`
+          }
+        })
+        setVideos(mapped)
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load videos')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchVideos().catch(() => {
+      setError('Failed to load videos')
+      setLoading(false)
+    })
+  }, [])
+
   const filteredVideos = useMemo(() => {
-    const filtered = mockVideos.filter(video => {
+    const filtered = videos.filter(video => {
       const matchesQuery = !filters.query || 
         video.prompt.toLowerCase().includes(filters.query.toLowerCase())
       const matchesModel = !filters.model || video.model === filters.model
@@ -106,7 +110,7 @@ const GalleryPage: React.FC = () => {
     })
     
     return filtered
-  }, [filters])
+  }, [filters, videos])
   
   const handleSearch = (query: string) => {
     setFilters(prev => ({ ...prev, query }))
@@ -129,10 +133,17 @@ const GalleryPage: React.FC = () => {
     setShowDeleteModal(true)
   }
   
-  const confirmDelete = () => {
-    if (videoToDelete) {
-      // In real implementation, this would call the API to delete the video
-      console.log('Deleting video:', videoToDelete)
+  const confirmDelete = async () => {
+    if (!videoToDelete) return
+    try {
+      const res = await fetch(`/videos/${videoToDelete}`, { method: 'DELETE' })
+      if (!res.ok) {
+        throw new Error('Failed to delete video')
+      }
+      setVideos(prev => prev.filter(v => v.id !== videoToDelete))
+    } catch (e) {
+      console.error(e)
+    } finally {
       setShowDeleteModal(false)
       setVideoToDelete(null)
     }
@@ -266,7 +277,21 @@ const GalleryPage: React.FC = () => {
           initial="hidden"
           animate="visible"
         >
-          {filteredVideos.length === 0 ? (
+          {loading ? (
+            <Card className="text-center py-12">
+              <Film className="h-16 w-16 text-moon-dust mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-starlight mb-2">
+                Loading videos...
+              </h3>
+            </Card>
+          ) : error ? (
+            <Card className="text-center py-12">
+              <h3 className="text-xl font-semibold text-starlight mb-2">
+                Failed to load videos
+              </h3>
+              <p className="text-moon-dust mb-6">{error}</p>
+            </Card>
+          ) : filteredVideos.length === 0 ? (
             <Card className="text-center py-12">
               <Film className="h-16 w-16 text-moon-dust mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-starlight mb-2">
@@ -298,9 +323,14 @@ const GalleryPage: React.FC = () => {
                   {viewMode === 'grid' ? (
                     <Card className="group cursor-pointer" glow="nebula">
                       <div className="aspect-video bg-cosmic-gray rounded-lg mb-4 overflow-hidden">
-                        <div className="w-full h-full bg-gradient-to-br from-aurora-blue/20 to-nebula-purple/20 flex items-center justify-center">
-                          <Play className="h-12 w-12 text-aurora-blue opacity-50" />
-                        </div>
+                        <video
+                          src={video.videoUrl}
+                          poster={video.thumbnailUrl}
+                          className="w-full h-full object-cover"
+                          muted
+                          loop
+                          playsInline
+                        />
                       </div>
                       
                       <div className="space-y-3">
@@ -340,9 +370,14 @@ const GalleryPage: React.FC = () => {
                     <Card className="group">
                       <div className="flex gap-4">
                         <div className="w-32 h-20 bg-cosmic-gray rounded-lg overflow-hidden flex-shrink-0">
-                          <div className="w-full h-full bg-gradient-to-br from-aurora-blue/20 to-nebula-purple/20 flex items-center justify-center">
-                            <Play className="h-8 w-8 text-aurora-blue opacity-50" />
-                          </div>
+                          <video
+                            src={video.videoUrl}
+                            poster={video.thumbnailUrl}
+                            className="w-full h-full object-cover"
+                            muted
+                            loop
+                            playsInline
+                          />
                         </div>
                         
                         <div className="flex-1 min-w-0">

@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import React, { useEffect, useState, useRef } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { 
   ArrowLeft, 
@@ -22,44 +22,95 @@ import Modal from '@/components/ui/Modal'
 import { VideoMetadata } from '@/types'
 import { formatRelativeTime, formatFileSize, formatDuration, copyToClipboard } from '@/utils'
 
-// Mock data - in real app this would come from API
-const mockVideo: VideoMetadata = {
-  id: '1',
-  prompt: 'A majestic eagle soaring over a mountain range at sunset',
-  negativePrompt: 'blurry, low quality, distorted',
-  model: 'zeroscope',
-  resolution: 512,
-  frames: 24,
-  fps: 8,
-  inferenceSteps: 50,
-  guidanceScale: 7.5,
-  createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-  duration: 3,
-  fileSize: 2048576,
-  videoUrl: '/api/videos/1.mp4',
-  thumbnailUrl: '/api/thumbnails/1.jpg'
-}
-
 const VideoDetailPage: React.FC = () => {
-  useParams<{ id: string }>()
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [video, setVideo] = useState<VideoMetadata | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [copied, setCopied] = useState(false)
-  
-  // In real app, fetch video by ID
-  const video = mockVideo
+  useEffect(() => {
+    if (!id) {
+      setError('Missing video id')
+      setLoading(false)
+      return
+    }
+
+    const fetchVideo = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const res = await fetch(`/videos/${id}`)
+        if (!res.ok) {
+          throw new Error('Video not found')
+        }
+        const raw = await res.json()
+        const params = raw?.params || {}
+        const frames = Number(raw?.frame_count || params.num_frames || 0)
+        const fps = Number(params.fps || 8)
+        const width = Number(params.width || params.resolution || 512)
+        const height = Number(params.height || params.resolution || 512)
+        const resolution = Math.max(width, height) || 512
+        const duration = fps > 0 && frames > 0 ? frames / fps : 0
+        const modelKey = params.local_model_key as string | undefined
+        const model = modelKey === 'modelscope-local' ? 'modelscope' : 'zeroscope'
+
+        const mapped: VideoMetadata = {
+          id: String(raw.id),
+          prompt: params.prompt || 'Generated video',
+          negativePrompt: params.negative_prompt,
+          model,
+          resolution,
+          frames,
+          fps,
+          inferenceSteps: Number(params.num_inference_steps || 0),
+          guidanceScale: Number(params.guidance_scale || 0),
+          createdAt: String(raw.created_at || new Date().toISOString()),
+          duration,
+          fileSize: 0,
+          thumbnailUrl: `/videos/${raw.id}/thumbnail.jpg`,
+          videoUrl: `/videos/${raw.id}/output.mp4`
+        }
+        setVideo(mapped)
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load video')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchVideo().catch(() => {
+      setError('Failed to load video')
+      setLoading(false)
+    })
+  }, [id])
   
   const handlePlayPause = () => {
-    setIsPlaying(!isPlaying)
+    const el = videoRef.current
+    if (!el) return
+    if (el.paused) {
+      el.play().catch(() => {})
+      setIsPlaying(true)
+    } else {
+      el.pause()
+      setIsPlaying(false)
+    }
   }
   
   const handleDownload = () => {
-    // In real app, this would trigger download
-    console.log('Downloading video:', video.id)
+    if (!video) return
+    const a = document.createElement('a')
+    a.href = video.videoUrl
+    a.download = `video_${video.id}.mp4`
+    a.click()
   }
   
   const handleShare = () => {
+    if (!video) return
     const url = `${window.location.origin}/video/${video.id}`
     setShareUrl(url)
     copyToClipboard(url).then(() => {
@@ -72,15 +123,34 @@ const VideoDetailPage: React.FC = () => {
     setShowDeleteModal(true)
   }
   
-  const confirmDelete = () => {
-    // In real app, this would call API to delete video
-    console.log('Deleting video:', video.id)
-    setShowDeleteModal(false)
-    // Redirect to gallery
-    window.location.href = '/gallery'
+  const confirmDelete = async () => {
+    if (!video) return
+    try {
+      const res = await fetch(`/videos/${video.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        throw new Error('Failed to delete video')
+      }
+      setShowDeleteModal(false)
+      navigate('/gallery')
+    } catch (e) {
+      console.error(e)
+      setShowDeleteModal(false)
+    }
   }
   
-  if (!video) {
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-deep-space flex items-center justify-center">
+        <Card className="text-center py-12">
+          <h2 className="text-2xl font-semibold text-starlight mb-4">
+            Loading video...
+          </h2>
+        </Card>
+      </div>
+    )
+  }
+
+  if (error || !video) {
     return (
       <div className="min-h-screen bg-deep-space flex items-center justify-center">
         <Card className="text-center py-12">
@@ -88,7 +158,7 @@ const VideoDetailPage: React.FC = () => {
             Video Not Found
           </h2>
           <p className="text-moon-dust mb-6">
-            The video you're looking for doesn't exist or has been deleted.
+            {error || "The video you're looking for doesn't exist or has been deleted."}
           </p>
           <Link to="/gallery">
             <Button>
@@ -141,22 +211,16 @@ const VideoDetailPage: React.FC = () => {
           >
             <Card className="overflow-hidden">
               <div className="aspect-video bg-cosmic-gray relative group">
-                {/* Video Placeholder */}
-                <div className="w-full h-full bg-gradient-to-br from-aurora-blue/20 to-nebula-purple/20 flex items-center justify-center">
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={handlePlayPause}
-                    className="p-4 rounded-full bg-aurora-blue/20 backdrop-blur-sm border border-aurora-blue/30 hover:bg-aurora-blue/30 transition-colors"
-                  >
-                    {isPlaying ? (
-                      <Pause className="h-12 w-12 text-aurora-blue" />
-                    ) : (
-                      <Play className="h-12 w-12 text-aurora-blue ml-1" />
-                    )}
-                  </motion.button>
-                </div>
-                
+                <video
+                  ref={videoRef}
+                  src={video.videoUrl}
+                  poster={video.thumbnailUrl}
+                  className="w-full h-full object-cover"
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  controls
+                />
+
                 {/* Video Controls Overlay */}
                 <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
                   <div className="flex items-center gap-2">
